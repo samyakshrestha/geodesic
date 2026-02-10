@@ -768,8 +768,8 @@
         lensAberration: 0.93,
         detectorNoise: 0.39,
         bloom: 0.65,
-        useSkyMap: false,
-        skyMapStrength: 0.35,
+        useSkyMap: true,
+        skyMapStrength: 0.72,
         showGrid: false
       };
 
@@ -822,25 +822,102 @@
       var computeScene = new THREE.Scene();
       computeScene.add(new THREE.Mesh(quadGeo, computeMaterial));
 
-      var fallbackSkyMap = new THREE.DataTexture(new Uint8Array([0, 0, 0]), 1, 1, THREE.RGBFormat);
-      fallbackSkyMap.needsUpdate = true;
-      fallbackSkyMap.minFilter = THREE.LinearFilter;
-      fallbackSkyMap.magFilter = THREE.LinearFilter;
+      function createFallbackSkyMapTexture() {
+        var w = 2048;
+        var h = 1024;
+        var canvas = document.createElement("canvas");
+        canvas.width = w;
+        canvas.height = h;
+        var ctx = canvas.getContext("2d");
+
+        var bg = ctx.createLinearGradient(0, 0, 0, h);
+        bg.addColorStop(0, "#02040b");
+        bg.addColorStop(1, "#010208");
+        ctx.fillStyle = bg;
+        ctx.fillRect(0, 0, w, h);
+
+        ctx.save();
+        ctx.translate(w * 0.5, h * 0.5);
+        ctx.rotate(-0.42);
+        var core = ctx.createLinearGradient(-w * 0.5, 0, w * 0.5, 0);
+        core.addColorStop(0.0, "rgba(18,24,46,0.20)");
+        core.addColorStop(0.28, "rgba(142,128,168,0.46)");
+        core.addColorStop(0.5, "rgba(255,232,196,0.72)");
+        core.addColorStop(0.72, "rgba(142,128,168,0.44)");
+        core.addColorStop(1.0, "rgba(18,24,46,0.18)");
+        ctx.fillStyle = core;
+        ctx.fillRect(-w * 0.7, -h * 0.12, w * 1.4, h * 0.24);
+
+        ctx.globalCompositeOperation = "multiply";
+        for (var i = 0; i < 180; i++) {
+          var laneX = (Math.random() - 0.5) * w * 1.1;
+          var laneY = (Math.random() - 0.5) * h * 0.14;
+          var laneW = 40 + Math.random() * 260;
+          var laneH = 6 + Math.random() * 20;
+          ctx.fillStyle = "rgba(18,18,22," + (0.08 + Math.random() * 0.24) + ")";
+          ctx.fillRect(laneX, laneY, laneW, laneH);
+        }
+        ctx.restore();
+
+        var tex = new THREE.CanvasTexture(canvas);
+        tex.wrapS = THREE.RepeatWrapping;
+        tex.wrapT = THREE.ClampToEdgeWrapping;
+        tex.minFilter = THREE.LinearMipmapLinearFilter;
+        tex.magFilter = THREE.LinearFilter;
+        if ("colorSpace" in tex) tex.colorSpace = THREE.SRGBColorSpace;
+        tex.needsUpdate = true;
+        return tex;
+      }
+
+      var fallbackSkyMap = createFallbackSkyMapTexture();
       uniforms.uSkyMapTex.value = fallbackSkyMap;
 
       var skyMapReady = false;
       var skyMapLoader = new THREE.TextureLoader();
       skyMapLoader.setCrossOrigin("anonymous");
+      var skyMapUrl = "https://upload.wikimedia.org/wikipedia/commons/6/60/ESO_-_Milky_Way.jpg";
+      var maxSkyMapDim = Math.min(4096, renderer.capabilities.maxTextureSize || 4096);
+
+      function optimizeSkyMapTexture(tex) {
+        var img = tex.image;
+        var w = img && img.width ? img.width : 0;
+        var h = img && img.height ? img.height : 0;
+
+        if (w > maxSkyMapDim || h > maxSkyMapDim) {
+          var scale = maxSkyMapDim / Math.max(w, h);
+          var cw = Math.max(1, Math.floor(w * scale));
+          var ch = Math.max(1, Math.floor(h * scale));
+          var canvas = document.createElement("canvas");
+          canvas.width = cw;
+          canvas.height = ch;
+          var ctx = canvas.getContext("2d");
+          ctx.drawImage(img, 0, 0, cw, ch);
+
+          var resized = new THREE.CanvasTexture(canvas);
+          resized.wrapS = THREE.RepeatWrapping;
+          resized.wrapT = THREE.ClampToEdgeWrapping;
+          resized.minFilter = THREE.LinearMipmapLinearFilter;
+          resized.magFilter = THREE.LinearFilter;
+          if ("colorSpace" in resized) resized.colorSpace = THREE.SRGBColorSpace;
+          resized.anisotropy = Math.min(8, renderer.capabilities.getMaxAnisotropy());
+          resized.needsUpdate = true;
+          tex.dispose();
+          return resized;
+        }
+
+        tex.wrapS = THREE.RepeatWrapping;
+        tex.wrapT = THREE.ClampToEdgeWrapping;
+        tex.minFilter = THREE.LinearMipmapLinearFilter;
+        tex.magFilter = THREE.LinearFilter;
+        if ("colorSpace" in tex) tex.colorSpace = THREE.SRGBColorSpace;
+        tex.anisotropy = Math.min(8, renderer.capabilities.getMaxAnisotropy());
+        return tex;
+      }
+
       skyMapLoader.load(
-        "https://cdn.jsdelivr.net/gh/mrdoob/three.js@r160/examples/textures/planets/galaxy_starfield.png",
+        skyMapUrl,
         function (tex) {
-          tex.wrapS = THREE.RepeatWrapping;
-          tex.wrapT = THREE.ClampToEdgeWrapping;
-          tex.minFilter = THREE.LinearMipmapLinearFilter;
-          tex.magFilter = THREE.LinearFilter;
-          if ("colorSpace" in tex) tex.colorSpace = THREE.SRGBColorSpace;
-          tex.anisotropy = Math.min(8, renderer.capabilities.getMaxAnisotropy());
-          uniforms.uSkyMapTex.value = tex;
+          uniforms.uSkyMapTex.value = optimizeSkyMapTexture(tex);
           skyMapReady = true;
         },
         undefined,
@@ -1041,11 +1118,13 @@
         lastHudUpdate = now;
         var qualityPct = Math.round(qualityLevels[qualityIndex] * 100);
         var steps = Math.round(170 * uniforms.uStepBudget.value);
+        var skyMapState = params.useSkyMap ? (skyMapReady ? "REAL" : "FALLBACK") : "OFF";
         hud.textContent =
           "FPS " + fpsSmooth.toFixed(1) +
           " | QUALITY " + qualityPct + "%" +
           " | RK4 STEPS " + steps +
           " | SCATTER " + bloomStrengthRuntime.toFixed(2) +
+          " | SKYMAP " + skyMapState +
           (paused ? " | PAUSED" : "");
       }
 
@@ -1100,7 +1179,7 @@
         uniforms.uCoronalEmission.value = params.coronalEmission;
         uniforms.uRingSharpness.value = params.ringSharpness;
         uniforms.uSkyDrift.value = totalTime * params.driftRate * 0.18;
-        uniforms.uUseSkyMap.value = params.useSkyMap && skyMapReady ? 1.0 : 0.0;
+        uniforms.uUseSkyMap.value = params.useSkyMap ? 1.0 : 0.0;
         uniforms.uSkyMapStrength.value = params.skyMapStrength;
         uniforms.uLensOffset.value.set(0.0, 0.0, 0.0);
         uniforms.uShowGrid.value = params.showGrid ? 1.0 : 0.0;
