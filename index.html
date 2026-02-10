@@ -1,0 +1,1141 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+  <title>Interactive Kerr Black Hole Visualizer</title>
+  <meta name="description" content="Real-time gravitational lensing simulation inspired by Interstellar. Built with WebGL.">
+  <meta property="og:title" content="Interactive Kerr Black Hole Visualizer">
+  <meta property="og:description" content="Real-time gravitational lensing simulation inspired by Interstellar. Built with WebGL.">
+  <meta property="og:type" content="website">
+  <style>
+    :root {
+      --hud-bg: rgba(10, 15, 24, 0.58);
+      --hud-border: rgba(126, 170, 255, 0.25);
+      --hud-text: rgba(231, 241, 255, 0.93);
+      --accent: #a4ccff;
+      --fallback-bg: radial-gradient(circle at 20% 20%, #1d2735 0%, #0c1019 55%, #06080d 100%);
+    }
+
+    html,
+    body {
+      margin: 0;
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      background: #03050a;
+      font-family: "Avenir Next", "Segoe UI", "Helvetica Neue", sans-serif;
+    }
+
+    canvas {
+      position: fixed;
+      inset: 0;
+      width: 100vw;
+      height: 100vh;
+      display: block;
+    }
+
+    #hud {
+      position: fixed;
+      top: 14px;
+      left: 14px;
+      z-index: 15;
+      pointer-events: none;
+      color: var(--hud-text);
+      background: var(--hud-bg);
+      border: 1px solid var(--hud-border);
+      border-radius: 12px;
+      padding: 8px 11px;
+      font-size: 12px;
+      letter-spacing: 0.05em;
+      backdrop-filter: blur(5px);
+      text-transform: uppercase;
+      line-height: 1.45;
+      box-shadow: 0 10px 35px rgba(0, 0, 0, 0.35);
+    }
+
+    #titleOverlay {
+      position: fixed;
+      left: 22px;
+      bottom: 18px;
+      z-index: 12;
+      pointer-events: none;
+      color: rgba(240, 246, 255, 0.95);
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      font-size: 13px;
+      font-family: "Optima", "Avenir Next", "Trebuchet MS", sans-serif;
+      text-shadow: 0 3px 20px rgba(0, 0, 0, 0.6);
+      animation: titleFade 3.3s ease forwards;
+    }
+
+    @keyframes titleFade {
+      0% {
+        opacity: 0;
+        transform: translateY(8px);
+      }
+      12% {
+        opacity: 1;
+        transform: translateY(0);
+      }
+      78% {
+        opacity: 1;
+        transform: translateY(0);
+      }
+      100% {
+        opacity: 0;
+        transform: translateY(-8px);
+      }
+    }
+
+    #fallback {
+      position: fixed;
+      inset: 0;
+      z-index: 50;
+      display: none;
+      align-items: center;
+      justify-content: center;
+      background: var(--fallback-bg);
+      color: rgba(237, 245, 255, 0.95);
+      text-align: center;
+      padding: 24px;
+      box-sizing: border-box;
+      font-family: "Avenir Next", "Segoe UI", sans-serif;
+    }
+
+    #fallback .inner {
+      max-width: 700px;
+      border: 1px solid rgba(162, 196, 255, 0.33);
+      background: rgba(8, 11, 18, 0.56);
+      border-radius: 14px;
+      padding: 22px 24px;
+      box-shadow: 0 12px 40px rgba(0, 0, 0, 0.45);
+      line-height: 1.5;
+    }
+
+    #fallback h1 {
+      margin: 0 0 10px;
+      font-size: 22px;
+      letter-spacing: 0.04em;
+      font-weight: 600;
+      color: #dfeeff;
+    }
+
+    #fallback p {
+      margin: 0;
+      font-size: 15px;
+      color: rgba(226, 238, 255, 0.9);
+    }
+  </style>
+</head>
+<body>
+  <div id="hud"></div>
+  <div id="titleOverlay">Kerr Black Hole - Interactive Simulation</div>
+  <div id="fallback">
+    <div class="inner">
+      <h1>WebGL Required</h1>
+      <p>
+        This visualization requires WebGL (GPU-accelerated graphics). Your browser or device does not support it.
+        Please try a modern browser on a laptop, phone, or tablet.
+      </p>
+    </div>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/lil-gui@0.19/dist/lil-gui.umd.min.js"></script>
+  <script>
+    (function () {
+      function supportsWebGL() {
+        try {
+          var c = document.createElement("canvas");
+          if (!window.WebGLRenderingContext) return false;
+          return !!(c.getContext("webgl2") || c.getContext("webgl") || c.getContext("experimental-webgl"));
+        } catch (err) {
+          return false;
+        }
+      }
+
+      var fallback = document.getElementById("fallback");
+      var titleOverlay = document.getElementById("titleOverlay");
+      var hud = document.getElementById("hud");
+
+      if (!supportsWebGL() || typeof THREE === "undefined") {
+        fallback.style.display = "flex";
+        titleOverlay.style.display = "none";
+        hud.style.display = "none";
+        return;
+      }
+
+      var vertexShader = [
+        "varying vec2 vUv;",
+        "void main() {",
+        "  vUv = uv;",
+        "  gl_Position = vec4(position.xy, 0.0, 1.0);",
+        "}"
+      ].join("\n");
+
+      var fragmentShader = [
+        "precision highp float;",
+        "",
+        "varying vec2 vUv;",
+        "",
+        "uniform float uTime;",
+        "uniform float uDiskTime;",
+        "uniform vec2 uResolution;",
+        "uniform float uMass;",
+        "uniform float uSpin;",
+        "uniform float uObserverDist;",
+        "uniform float uObserverInclination;",
+        "uniform vec3 uLensOffset;",
+        "uniform float uSkyDrift;",
+        "uniform sampler2D uSkyMapTex;",
+        "uniform float uUseSkyMap;",
+        "uniform float uSkyMapStrength;",
+        "uniform float uTimeDilation;",
+        "uniform float uStepBudget;",
+        "uniform float uStepScale;",
+        "uniform float uQualityScale;",
+        "uniform float uShowGrid;",
+        "uniform float uDiskAngularSpeed;",
+        "uniform float uDiskSharpness;",
+        "uniform float uCoronalEmission;",
+        "uniform float uRingSharpness;",
+        "uniform float uFrame;",
+        "",
+        "const float PI = 3.141592653589793;",
+        "const int MAX_STEPS = 240;",
+        "",
+        "struct GeodesicState {",
+        "  vec3 p;",
+        "  vec3 v;",
+        "};",
+        "",
+        "struct GeodesicDeriv {",
+        "  vec3 dp;",
+        "  vec3 dv;",
+        "};",
+        "",
+        "float saturate(float x) {",
+        "  return clamp(x, 0.0, 1.0);",
+        "}",
+        "",
+        "float hash21(vec2 p) {",
+        "  p = fract(p * vec2(123.34, 456.21));",
+        "  p += dot(p, p + 45.32);",
+        "  return fract(p.x * p.y);",
+        "}",
+        "",
+        "vec2 hash22(vec2 p) {",
+        "  return vec2(",
+        "    hash21(p + vec2(13.17, 71.43)),",
+        "    hash21(p + vec2(57.91, 19.37))",
+        "  );",
+        "}",
+        "",
+        "float hash31(vec3 p) {",
+        "  p = fract(p * vec3(0.1031, 0.11369, 0.13787));",
+        "  p += dot(p, p.yzx + 19.19);",
+        "  return fract((p.x + p.y) * p.z);",
+        "}",
+        "",
+        "float noise3(vec3 p) {",
+        "  vec3 i = floor(p);",
+        "  vec3 f = fract(p);",
+        "  f = f * f * (3.0 - 2.0 * f);",
+        "",
+        "  float n000 = hash31(i + vec3(0.0, 0.0, 0.0));",
+        "  float n100 = hash31(i + vec3(1.0, 0.0, 0.0));",
+        "  float n010 = hash31(i + vec3(0.0, 1.0, 0.0));",
+        "  float n110 = hash31(i + vec3(1.0, 1.0, 0.0));",
+        "  float n001 = hash31(i + vec3(0.0, 0.0, 1.0));",
+        "  float n101 = hash31(i + vec3(1.0, 0.0, 1.0));",
+        "  float n011 = hash31(i + vec3(0.0, 1.0, 1.0));",
+        "  float n111 = hash31(i + vec3(1.0, 1.0, 1.0));",
+        "",
+        "  float nx00 = mix(n000, n100, f.x);",
+        "  float nx10 = mix(n010, n110, f.x);",
+        "  float nx01 = mix(n001, n101, f.x);",
+        "  float nx11 = mix(n011, n111, f.x);",
+        "",
+        "  float nxy0 = mix(nx00, nx10, f.y);",
+        "  float nxy1 = mix(nx01, nx11, f.y);",
+        "  return mix(nxy0, nxy1, f.z);",
+        "}",
+        "",
+        "float fbm(vec3 p) {",
+        "  float total = 0.0;",
+        "  float amp = 0.5;",
+        "  for (int i = 0; i < 3; i++) {",
+        "    total += amp * noise3(p);",
+        "    p = p * 2.02 + vec3(17.11, 31.77, 11.41);",
+        "    amp *= 0.5;",
+        "  }",
+        "  return total;",
+        "}",
+        "",
+        "float mapMass(float rawMass) {",
+        "  return 0.30 + 0.38 * rawMass;",
+        "}",
+        "",
+        "float horizonRadius(float m, float spin) {",
+        "  float a = spin * m * 0.92;",
+        "  return m + sqrt(max(0.0, m * m - a * a));",
+        "}",
+        "",
+        "float photonSphereRadius(float m, float spin) {",
+        "  return mix(2.8 * m, 1.95 * m, spin);",
+        "}",
+        "",
+        "bool insideHorizon(vec3 p, float m, float spin) {",
+        "  vec3 q = p;",
+        "  q.x -= 0.22 * spin * m;",
+        "  float squash = mix(1.0, 0.73, spin);",
+        "  float r = sqrt((q.x * q.x) / (squash * squash + 1e-5) + q.y * q.y + (q.z * q.z) / (1.0 + 0.1 * spin));",
+        "  return r < horizonRadius(m, spin);",
+        "}",
+        "",
+        "bool escapedToFarField(GeodesicState s, float m) {",
+        "  return length(s.p) > (34.0 * m + 16.0);",
+        "}",
+        "",
+        "GeodesicDeriv geodesicDerivative(GeodesicState s, float m, float spin) {",
+        "  float r = length(s.p) + 1e-5;",
+        "  vec3 n = s.p / r;",
+        "  float r2 = r * r;",
+        "  float r3 = r2 * r;",
+        "  float r5 = r3 * r2;",
+        "",
+        "  vec3 grav = -(m * n) / (r2 + 0.35 * m);",
+        "  grav += -(2.6 * m * m * n) / (r3 + 0.75 * m * m);",
+        "",
+        "  vec3 J = vec3(0.0, spin * m * 1.8, 0.0);",
+        "  vec3 B = (3.0 * n * dot(n, J) - J) / (r3 + 0.15);",
+        "  vec3 lenseThirring = 2.2 * cross(s.v, B);",
+        "",
+        "  vec3 quad = (spin * spin * m * 0.6) * vec3(s.p.x, -1.8 * s.p.y, s.p.z) / (r5 + 0.2);",
+        "",
+        "  vec3 dv = grav + lenseThirring + quad;",
+        "  float limiter = 1.0 / (1.0 + length(dv) * 0.15);",
+        "",
+        "  GeodesicDeriv d;",
+        "  d.dp = s.v;",
+        "  d.dv = dv * limiter;",
+        "  return d;",
+        "}",
+        "",
+        "GeodesicState addScaled(GeodesicState s, GeodesicDeriv k, float h) {",
+        "  GeodesicState outS;",
+        "  outS.p = s.p + h * k.dp;",
+        "  outS.v = s.v + h * k.dv;",
+        "  return outS;",
+        "}",
+        "",
+        "GeodesicState rk4StepKerr(GeodesicState s, float h, float m, float spin) {",
+        "  GeodesicDeriv k1 = geodesicDerivative(s, m, spin);",
+        "  GeodesicDeriv k2 = geodesicDerivative(addScaled(s, k1, h * 0.5), m, spin);",
+        "  GeodesicDeriv k3 = geodesicDerivative(addScaled(s, k2, h * 0.5), m, spin);",
+        "  GeodesicDeriv k4 = geodesicDerivative(addScaled(s, k3, h), m, spin);",
+        "",
+        "  GeodesicState outS;",
+        "  outS.p = s.p + h * (k1.dp + 2.0 * k2.dp + 2.0 * k3.dp + k4.dp) / 6.0;",
+        "  outS.v = s.v + h * (k1.dv + 2.0 * k2.dv + 2.0 * k3.dv + k4.dv) / 6.0;",
+        "  outS.v = normalize(outS.v + vec3(1e-6, 0.0, 0.0));",
+        "  return outS;",
+        "}",
+        "",
+        "float adaptiveStepSize(GeodesicState s, float m, float spin) {",
+        "  float r = length(s.p);",
+        "  float hR = horizonRadius(m, spin);",
+        "  float nearR = hR * 1.05;",
+        "  float farR = 12.0 * m + 6.0;",
+        "  float t = saturate((r - nearR) / (farR - nearR));",
+        "  float h = mix(0.012, 1.0, t);",
+        "  return h * uStepScale;",
+        "}",
+        "",
+        "float photonRingContribution(GeodesicState s0, GeodesicState s1, float m, float spin) {",
+        "  float rMid = length(0.5 * (s0.p + s1.p));",
+        "  float rP = photonSphereRadius(m, spin);",
+        "  float closeness = exp(-abs(rMid - rP) / (0.16 * m + 0.08));",
+        "  float bend = 1.0 - dot(normalize(s0.v), normalize(s1.v));",
+        "  bend = clamp(bend * 35.0, 0.0, 2.5);",
+        "  float planeBoost = 1.0 - smoothstep(0.0, 0.85, abs(s0.p.y) / (rMid + 1e-4));",
+        "  return closeness * bend * (0.02 + 0.07 * planeBoost);",
+        "}",
+        "",
+        "vec2 directionToUV(vec3 dir) {",
+        "  float lon = atan(dir.z, dir.x);",
+        "  float lat = asin(clamp(dir.y, -1.0, 1.0));",
+        "  return vec2(lon / (2.0 * PI) + 0.5, lat / PI + 0.5);",
+        "}",
+        "",
+        "vec3 starLayer(vec2 uv, float scale, float density, float coreSize, float seed) {",
+        "  vec2 g = uv * vec2(scale, scale * 0.5);",
+        "  vec2 id = floor(g);",
+        "  vec2 f = fract(g) - 0.5;",
+        "",
+        "  vec2 rnd = hash22(id + vec2(seed, seed * 1.7));",
+        "  vec2 pos = (rnd - 0.5) * 0.82;",
+        "",
+        "  float present = step(1.0 - density, hash21(id + vec2(seed * 2.1, seed * 3.4)));",
+        "  float d = length(f - pos);",
+        "  float aa = 1.2 / max(uResolution.y, 1.0);",
+        "  float cs = coreSize + aa * aa;",
+        "  float core = exp(-d * d / cs);",
+        "  float halo = exp(-d * d / (cs * 6.5)) * 0.28;",
+        "  float twinkle = 0.78 + 0.22 * sin(uTime * (0.7 + 1.8 * rnd.x) + rnd.y * 6.28318);",
+        "",
+        "  vec3 c = mix(vec3(1.35, 1.08, 0.82), vec3(0.72, 0.9, 1.35), rnd.x);",
+        "  return c * present * twinkle * (core + halo);",
+        "}",
+        "",
+        "vec3 starsAtUV(vec2 uv) {",
+        "  vec3 stars = vec3(0.0);",
+        "  stars += starLayer(uv, 2600.0, 0.0021, 0.0048, 3.7);",
+        "  stars += starLayer(uv, 1300.0, 0.0017, 0.0078, 11.1);",
+        "  stars += starLayer(uv, 420.0, 0.0010, 0.0165, 27.4) * 1.35;",
+        "  stars += starLayer(uv, 95.0, 0.00024, 0.058, 53.2) * 1.9;",
+        "  stars += starLayer(uv, 62.0, 0.00011, 0.092, 79.3) * 2.3;",
+        "  if (uQualityScale > 0.7) {",
+        "    stars += starLayer(uv, 150.0, 0.00045, 0.034, 41.6) * 1.55;",
+        "  }",
+        "  return stars;",
+        "}",
+        "",
+        "vec3 sampleStars(vec3 dir) {",
+        "  vec2 uv = directionToUV(dir);",
+        "  vec3 stars = starsAtUV(uv);",
+        "  if (uQualityScale > 0.82) {",
+        "    vec2 px = vec2(1.0) / max(uResolution, vec2(1.0));",
+        "    vec2 jitter = (hash22(uv * vec2(1024.0, 512.0) + uFrame) - 0.5) * px * 2.8;",
+        "    vec2 jitter2 = vec2(-jitter.y, jitter.x);",
+        "    vec3 aa = 0.5 * (starsAtUV(uv + jitter) + starsAtUV(uv - jitter2));",
+        "    stars = mix(stars, aa, 0.46);",
+        "  }",
+        "  return stars;",
+        "}",
+        "",
+        "vec3 sampleNebula(vec3 dir) {",
+        "  return vec3(0.0);",
+        "}",
+        "",
+        "vec3 sampleSky(vec3 dir) {",
+        "  float skyAngle = uSkyDrift * 6.28318530718;",
+        "  float c = cos(skyAngle);",
+        "  float s = sin(skyAngle);",
+        "  vec3 driftDir = vec3(c * dir.x - s * dir.z, dir.y, s * dir.x + c * dir.z);",
+        "  vec2 uv = directionToUV(driftDir);",
+        "  vec3 stars = sampleStars(driftDir);",
+        "  vec3 sky = stars;",
+        "  if (uUseSkyMap > 0.5) {",
+        "    vec3 skyMap = texture2D(uSkyMapTex, uv).rgb;",
+        "    skyMap = pow(max(skyMap, vec3(0.0)), vec3(1.6));",
+        "    skyMap *= uSkyMapStrength * 0.42;",
+        "    sky = max(stars, skyMap + stars * 0.25);",
+        "  }",
+        "",
+        "  if (uShowGrid > 0.5) {",
+        "    float lx = min(fract(uv.x * 24.0), 1.0 - fract(uv.x * 24.0));",
+        "    float ly = min(fract(uv.y * 12.0), 1.0 - fract(uv.y * 12.0));",
+        "    float gx = 1.0 - smoothstep(0.0, 0.015, lx);",
+        "    float gy = 1.0 - smoothstep(0.0, 0.02, ly);",
+        "    sky += max(gx, gy) * vec3(0.1, 0.45, 0.65);",
+        "  }",
+        "  return sky;",
+        "}",
+        "",
+        "vec4 sampleDiskPoint(vec3 p, vec3 rayDir, float m, float spin, float diskTime, float hR) {",
+        "  float rho = length(p.xz);",
+        "  float inner = max(hR * 1.05, (1.8 - 0.55 * spin) * m + 0.8);",
+        "  float outer = inner + 7.0 * m + 4.0;",
+        "",
+        "  if (rho < inner || rho > outer) {",
+        "    return vec4(0.0);",
+        "  }",
+        "",
+        "  float thickness = mix(0.072 * m + 0.032, 0.040 * m + 0.019, uDiskSharpness);",
+        "  float verticalExp = mix(1.85, 2.55, uDiskSharpness);",
+        "  float vertical = exp(-pow(abs(p.y) / thickness, verticalExp));",
+        "  if (vertical < 0.003) {",
+        "    return vec4(0.0);",
+        "  }",
+        "",
+        "  float ringMask = smoothstep(inner, inner + 0.6, rho) * smoothstep(outer, outer - 1.6, rho);",
+        "  float angle = atan(p.z, p.x);",
+        "  float radial01 = saturate((rho - inner) / max(outer - inner, 1e-3));",
+        "",
+        "  float orbitalOmega = (0.8 + 4.2 * spin) * pow(inner / max(rho, inner + 1e-4), 1.5) * uDiskAngularSpeed;",
+        "  float advAngle = angle - diskTime * orbitalOmega;",
+        "  float turbulence = fbm(vec3(advAngle * 3.6, rho * 0.52, diskTime * 0.18 + rho * 0.34));",
+        "  float spiral = 0.5 + 0.5 * sin(advAngle * 8.0 + rho * 1.9);",
+        "  float filaments = 0.5 + 0.5 * sin(rho * 8.4 - advAngle * 18.0 + turbulence * 5.4);",
+        "  float streakFreq = mix(24.0, 52.0, uDiskSharpness);",
+        "  float azStreak = 0.5 + 0.5 * sin(advAngle * streakFreq + rho * 4.6 - diskTime * (6.0 + 4.0 * uDiskSharpness));",
+        "  float shearBands = 0.5 + 0.5 * sin(log(max(rho, 1.0)) * 52.0 - advAngle * (24.0 + 12.0 * spin));",
+        "  float fineTurb = 0.5;",
+        "  if (uQualityScale > 0.72) {",
+        "    fineTurb = fbm(vec3(advAngle * 11.0, rho * 1.35, diskTime * 0.42 + rho * 0.92));",
+        "  }",
+        "",
+        "  float density = vertical * ringMask;",
+        "  float innerShear = exp(-(rho - inner) / (0.22 * m + 0.09));",
+        "  float outerFalloff = exp(-pow(radial01 * 1.45, 2.0));",
+        "  float shock = 0.5 + 0.5 * sin(advAngle * 16.0 - diskTime * 4.0 + rho * 3.6);",
+        "  density *= mix(0.35, 1.45, turbulence) * mix(0.58, 1.32, filaments) * mix(0.7, 1.4, spiral) * mix(0.72, 1.65, azStreak);",
+        "  density *= mix(0.76, 1.38, shearBands) * mix(0.72, 1.42, fineTurb);",
+        "  density *= 1.0 + innerShear * mix(0.45, 1.3, shock);",
+        "  density *= mix(0.62, 1.0, outerFalloff);",
+        "  if (density < 0.0015) {",
+        "    return vec4(0.0);",
+        "  }",
+        "",
+        "  float temp = pow(clamp(inner / max(rho, 0.001), 0.0, 1.0), 0.82);",
+        "  float innerGlow = exp(-pow((rho - inner) / (0.2 * m + 0.08), 2.0));",
+        "  vec3 baseColor = mix(vec3(1.18, 0.5, 0.16), vec3(2.25, 2.02, 1.62), temp);",
+        "  baseColor = mix(baseColor, vec3(2.85, 2.55, 2.22), innerGlow * (0.25 + 0.45 * spin));",
+        "  baseColor *= mix(0.72, 1.0, outerFalloff);",
+        "",
+        "  vec3 tangent = normalize(vec3(-p.z, 0.0, p.x));",
+        "  float beta = clamp(sqrt(m / max(rho, 0.25)) * 0.26 + 0.14 * spin, 0.0, 0.92);",
+        "  float mu = dot(tangent, -rayDir);",
+        "  float doppler = sqrt(max(0.04, (1.0 + beta * mu) / (1.0 - beta * mu + 1e-4)));",
+        "",
+        "  float toward = saturate((doppler - 1.0) * 1.8);",
+        "  float away = saturate((1.0 - doppler) * 1.8);",
+        "",
+        "  vec3 color = baseColor;",
+        "  color = mix(color * vec3(1.45, 0.48, 0.32), color * vec3(0.95, 1.07, 1.45), toward);",
+        "",
+        "  float beam = mix(0.42, 1.85, toward);",
+        "  beam *= (1.0 - 0.45 * away);",
+        "  color *= beam;",
+        "  color += vec3(1.8, 1.45, 1.1) * innerShear * (0.12 + 0.45 * toward);",
+        "  float scatter = pow(saturate(dot(tangent, -rayDir) * 0.5 + 0.5), 4.0);",
+        "  color += vec3(0.55, 0.68, 1.0) * innerShear * scatter * 0.22;",
+        "  vec3 radialDir = normalize(vec3(p.x, 0.0, p.z));",
+        "  float limb = pow(saturate(1.0 - abs(dot(radialDir, -rayDir))), 3.0);",
+        "  color += vec3(1.22, 1.05, 0.82) * innerShear * limb * (0.08 + 0.16 * spin);",
+        "",
+        "  float r = length(p);",
+        "  float grav = saturate((hR * 2.2 - r) / (hR * 1.55 + 1e-3));",
+        "  float red = saturate(grav * uTimeDilation);",
+        "  vec3 redTone = vec3(max(color.r, 0.05) * 1.28, color.g * 0.2, color.b * 0.07);",
+        "  color = mix(color, redTone, red);",
+        "",
+        "  return vec4(color, density * 0.22);",
+        "}",
+        "",
+        "vec4 sampleDiskSegment(vec3 p0, vec3 p1, vec3 rayDir, float m, float spin, float diskTime, float hR) {",
+        "  float segLen = length(p1 - p0);",
+        "  if (segLen < 1e-5) {",
+        "    return vec4(0.0);",
+        "  }",
+        "",
+        "  vec4 a = sampleDiskPoint(mix(p0, p1, 0.33), rayDir, m, spin, diskTime, hR);",
+        "  vec4 b = sampleDiskPoint(mix(p0, p1, 0.67), rayDir, m, spin, diskTime, hR);",
+        "  float midW = 0.0;",
+        "  vec4 c = vec4(0.0);",
+        "  if (uDiskSharpness > 0.45 && uQualityScale > 0.78) {",
+        "    c = sampleDiskPoint(mix(p0, p1, 0.5), rayDir, m, spin, diskTime, hR);",
+        "    midW = 0.7;",
+        "  }",
+        "",
+        "  float combinedDensity = (a.a + b.a + midW * c.a) / (2.0 + midW);",
+        "  float alpha = clamp(combinedDensity * segLen * 3.2, 0.0, 0.95);",
+        "  if (alpha <= 0.0) {",
+        "    return vec4(0.0);",
+        "  }",
+        "",
+        "  vec3 color = (a.rgb * a.a + b.rgb * b.a + midW * c.rgb * c.a) / max(a.a + b.a + midW * c.a, 1e-4);",
+        "  return vec4(color, alpha);",
+        "}",
+        "",
+        "vec3 acesToneMap(vec3 x) {",
+        "  const float a = 2.51;",
+        "  const float b = 0.03;",
+        "  const float c = 2.43;",
+        "  const float d = 0.59;",
+        "  const float e = 0.14;",
+        "  return clamp((x * (a * x + b)) / (x * (c * x + d) + e), 0.0, 1.0);",
+        "}",
+        "",
+        "void main() {",
+        "  vec2 uv = vUv * 2.0 - 1.0;",
+        "  uv.x *= uResolution.x / max(uResolution.y, 1.0);",
+        "",
+        "  float m = mapMass(uMass);",
+        "  float spin = clamp(uSpin, 0.0, 0.99);",
+        "  float hR = horizonRadius(m, spin);",
+        "",
+        "  float camDist = uObserverDist + m * 2.4;",
+        "  float inc = radians(uObserverInclination);",
+        "  vec3 roWorld = vec3(0.0, sin(inc) * camDist + m * 0.03, cos(inc) * camDist);",
+        "  vec3 targetWorld = vec3(0.0);",
+        "  vec3 ro = roWorld - uLensOffset;",
+        "  vec3 target = targetWorld - uLensOffset;",
+        "",
+        "  vec3 forward = normalize(target - ro);",
+        "  vec3 right = normalize(cross(vec3(0.0, 1.0, 0.0), forward));",
+        "  vec3 up = normalize(cross(forward, right));",
+        "",
+        "  float focal = 1.32;",
+        "  vec3 rd = normalize(forward * focal + right * uv.x + up * uv.y);",
+        "",
+        "  GeodesicState s;",
+        "  s.p = ro;",
+        "  s.v = rd;",
+        "",
+        "  vec3 color = vec3(0.0);",
+        "  float transmittance = 1.0;",
+        "  float photonRing = 0.0;",
+        "  float minR = 1e9;",
+        "  float maxIter = mix(72.0, 170.0, uStepBudget);",
+        "",
+        "  for (int i = 0; i < MAX_STEPS; i++) {",
+        "    if (float(i) >= maxIter) {",
+        "      break;",
+        "    }",
+        "",
+        "    float h = adaptiveStepSize(s, m, spin);",
+        "    GeodesicState sNext = rk4StepKerr(s, h, m, spin);",
+        "",
+        "    vec3 p0 = s.p;",
+        "    vec3 p1 = sNext.p;",
+        "    vec3 segDir = normalize(p1 - p0);",
+        "    float rMid = length(0.5 * (p0 + p1));",
+        "    minR = min(minR, rMid);",
+        "",
+        "    if (insideHorizon(sNext.p, m, spin)) {",
+        "      transmittance = 0.0;",
+        "      break;",
+        "    }",
+        "",
+        "    vec4 disk = sampleDiskSegment(p0, p1, segDir, m, spin, uDiskTime, hR);",
+        "    color += transmittance * disk.rgb * disk.a;",
+        "    transmittance *= (1.0 - disk.a);",
+        "",
+        "    photonRing += photonRingContribution(s, sNext, m, spin);",
+        "",
+        "    if (transmittance < 0.01) {",
+        "      s = sNext;",
+        "      break;",
+        "    }",
+        "",
+        "    s = sNext;",
+        "    if (escapedToFarField(s, m)) {",
+        "      break;",
+        "    }",
+        "  }",
+        "",
+        "  float rPhoton = photonSphereRadius(m, spin);",
+        "  float critical = exp(-abs(minR - rPhoton) / (0.18 * m + 0.06));",
+        "  photonRing *= (0.9 + critical * 1.5);",
+        "",
+        "  vec3 farDir = normalize(s.v);",
+        "  color += transmittance * sampleSky(farDir);",
+        "  float ringW1 = mix(0.052, 0.016, uRingSharpness);",
+        "  float ringW2 = mix(0.03, 0.01, uRingSharpness);",
+        "  float ringEdge = exp(-abs(minR - rPhoton) / (ringW1 * m + 0.02));",
+        "  float ringEdge2 = exp(-abs(minR - (rPhoton * (1.11 - 0.08 * spin))) / (ringW2 * m + 0.012));",
+        "  float ringPhase = uDiskTime * (1.2 + 3.8 * spin);",
+        "  float az = atan(farDir.z, farDir.x);",
+        "  float movingHotspot = pow(saturate(0.5 + 0.5 * cos(az - ringPhase)), 7.0);",
+        "  float sweepArc = smoothstep(0.72, 1.0, cos(az - ringPhase * 1.08));",
+        "  float ringShear = 0.78 + 0.22 * sin(az * 3.0 - ringPhase * 1.6);",
+        "  float ringDynamics = mix(1.0, ringShear + movingHotspot * 1.25 + sweepArc * 0.55, 0.52 + 0.44 * spin);",
+        "  float causticArc = pow(saturate(0.5 + 0.5 * cos(az - ringPhase * 1.22)), 18.0);",
+        "  float causticNeedle = pow(saturate(0.5 + 0.5 * cos(az * 2.2 - ringPhase * (1.35 + 0.35 * spin))), 30.0);",
+        "  float ringApproach = pow(saturate(0.5 + 0.5 * cos(az - ringPhase * 0.92)), 2.3);",
+        "  float ringRecede = pow(saturate(0.5 + 0.5 * cos(az - ringPhase * 0.92 + PI)), 2.2);",
+        "  vec3 ringTint = mix(vec3(0.92, 0.56, 0.34), vec3(1.35, 0.96, 0.65), ringApproach);",
+        "  ringTint *= mix(1.0, 0.82, ringRecede * 0.4);",
+        "  color += ringTint * photonRing * (0.34 + 0.2 * critical) * ringDynamics;",
+        "  float razorWidth = mix(0.018, 0.007, uRingSharpness) * m + 0.003;",
+        "  float razorRing = exp(-pow(abs(minR - rPhoton) / razorWidth, 2.0));",
+        "  color += vec3(1.55, 1.28, 0.96) * razorRing * (0.02 + 0.06 * uRingSharpness) * (0.52 + 0.3 * spin);",
+        "  color += vec3(1.24, 0.98, 0.68) * ringEdge * causticArc * (0.015 + 0.06 * spin);",
+        "  color += vec3(1.02, 0.8, 0.58) * ringEdge * causticNeedle * (0.01 + 0.05 * spin);",
+        "  color += vec3(0.9, 0.7, 0.5) * ringEdge * (0.1 + 0.12 * spin);",
+        "  color += vec3(0.72, 0.58, 0.42) * ringEdge2 * (0.03 + 0.05 * spin) * (0.52 + 0.15 * uCoronalEmission);",
+        "",
+        "  float equatorial = pow(1.0 - saturate(abs(farDir.y)), 1.7);",
+        "  float coronaBand = exp(-abs(minR - hR * 1.42) / (0.22 * m + 0.08));",
+        "  float coronaPulse = 0.72 + 0.28 * sin(uTime * 2.1 + minR * 9.5 + dot(farDir, vec3(7.0, 3.0, 5.0)));",
+        "  vec3 coronaColor = mix(vec3(1.08, 0.62, 0.28), vec3(0.85, 1.16, 1.42), 0.35 + 0.45 * spin);",
+        "  color += coronaColor * coronaBand * equatorial * coronaPulse * (0.003 + 0.02 * uCoronalEmission) * (0.35 + 0.65 * uQualityScale);",
+        "",
+        "  float shadowEdge = smoothstep(hR * 0.985, hR * 1.17, minR);",
+        "  color *= mix(0.0, 1.0, shadowEdge);",
+        "",
+        "  float vignette = smoothstep(1.45, 0.25, length(uv));",
+        "  color *= mix(0.7, 1.05, vignette);",
+        "  color += (hash21(gl_FragCoord.xy + vec2(uFrame, uFrame * 1.37)) - 0.5) * 0.0015;",
+        "",
+        "  gl_FragColor = vec4(color, 1.0);",
+        "}"
+      ].join("\n");
+
+      var bloomShader = [
+        "precision highp float;",
+        "varying vec2 vUv;",
+        "uniform sampler2D uMainTex;",
+        "uniform vec2 uTexelSize;",
+        "",
+        "void main() {",
+        "  vec3 bloom = vec3(0.0);",
+        "  float tw = 0.0;",
+        "  for (int x = -2; x <= 2; x++) {",
+        "    for (int y = -2; y <= 2; y++) {",
+        "      float d = length(vec2(float(x), float(y)));",
+        "      float w = exp(-d * d / 3.6);",
+        "      vec2 off = vec2(float(x), float(y)) * uTexelSize * 4.0;",
+        "      vec3 s = texture2D(uMainTex, vUv + off).rgb;",
+        "      float b = max(max(s.r, s.g), s.b);",
+        "      bloom += s * smoothstep(1.25, 2.6, b) * w;",
+        "      tw += w;",
+        "    }",
+        "  }",
+        "  gl_FragColor = vec4(bloom / tw, 1.0);",
+        "}"
+      ].join("\n");
+
+      var compositeShader = [
+        "precision highp float;",
+        "varying vec2 vUv;",
+        "uniform sampler2D uMainTex;",
+        "uniform sampler2D uBloomTex;",
+        "uniform float uBloomStrength;",
+        "uniform float uTime;",
+        "uniform float uSpin;",
+        "uniform float uQualityScale;",
+        "uniform vec2 uTexelSize;",
+        "uniform float uSharpenStrength;",
+        "uniform float uLensAberration;",
+        "uniform float uDetectorNoise;",
+        "",
+        "vec3 acesToneMap(vec3 x) {",
+        "  float a = 2.51;",
+        "  float b = 0.03;",
+        "  float c = 2.43;",
+        "  float d = 0.59;",
+        "  float e = 0.14;",
+        "  return clamp((x * (a * x + b)) / (x * (c * x + d) + e), 0.0, 1.0);",
+        "}",
+        "",
+        "float hash21(vec2 p) {",
+        "  p = fract(p * vec2(123.34, 456.21));",
+        "  p += dot(p, p + 45.32);",
+        "  return fract(p.x * p.y);",
+        "}",
+        "",
+        "void main() {",
+        "  vec2 fromCenter = vUv - 0.5;",
+        "  float edge = smoothstep(0.2, 1.0, length(fromCenter) * 1.4142);",
+        "  float aberr = uLensAberration * edge * (0.0012 + 0.0009 * uSpin) * (0.4 + 0.6 * uQualityScale);",
+        "  vec3 sceneBase = texture2D(uMainTex, vUv).rgb;",
+        "  vec3 sceneR = texture2D(uMainTex, vUv + vec2(aberr, -aberr * 0.35)).rgb;",
+        "  vec3 sceneB = texture2D(uMainTex, vUv - vec2(aberr, -aberr * 0.35)).rgb;",
+        "  vec3 scene = vec3(sceneR.r, sceneBase.g, sceneB.b);",
+        "  vec3 n = texture2D(uMainTex, vUv + vec2(0.0, uTexelSize.y)).rgb;",
+        "  vec3 s = texture2D(uMainTex, vUv - vec2(0.0, uTexelSize.y)).rgb;",
+        "  vec3 eCol = texture2D(uMainTex, vUv + vec2(uTexelSize.x, 0.0)).rgb;",
+        "  vec3 w = texture2D(uMainTex, vUv - vec2(uTexelSize.x, 0.0)).rgb;",
+        "  vec3 blur4 = 0.25 * (n + s + eCol + w);",
+        "  vec3 detail = sceneBase - blur4;",
+        "  scene += detail * uSharpenStrength * (0.4 + 0.6 * uQualityScale);",
+        "  vec3 bloom = texture2D(uBloomTex, vUv).rgb;",
+        "  vec3 color = scene + bloom * uBloomStrength;",
+        "  float grain = hash21(vUv * vec2(1679.7, 915.3) + vec2(uTime * 0.71, uTime * 1.33));",
+        "  color += (grain - 0.5) * (0.006 * uDetectorNoise) * (0.45 + 0.55 * uQualityScale);",
+        "  color = acesToneMap(color);",
+        "  color = pow(color, vec3(0.4545));",
+        "  gl_FragColor = vec4(color, 1.0);",
+        "}"
+      ].join("\n");
+
+      var params = {
+        mass: 3.79,
+        spin: 0.138,
+        observerDistance: 25.5,
+        observerInclination: 4.8,
+        timeDilation: 1.19,
+        diskAngularSpeed: 0.25,
+        diskSharpness: 0.72,
+        driftRate: -0.5,
+        coronalEmission: 0.78,
+        ringSharpness: 0.3,
+        imageSharpening: 0.43,
+        lensAberration: 0.93,
+        detectorNoise: 0.39,
+        bloom: 0.65,
+        useSkyMap: false,
+        skyMapStrength: 0.35,
+        showGrid: false
+      };
+
+      var renderer = new THREE.WebGLRenderer({
+        antialias: false,
+        alpha: false,
+        powerPreference: "high-performance"
+      });
+      renderer.setPixelRatio(1);
+      renderer.setSize(window.innerWidth, window.innerHeight, false);
+      renderer.domElement.setAttribute("aria-label", "Interactive Kerr black hole simulation canvas");
+      document.body.appendChild(renderer.domElement);
+
+      var orthoCam = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
+      var quadGeo = new THREE.PlaneGeometry(2, 2);
+
+      var uniforms = {
+        uTime: { value: 0 },
+        uDiskTime: { value: 0 },
+        uResolution: { value: new THREE.Vector2(window.innerWidth, window.innerHeight) },
+        uMass: { value: params.mass },
+        uSpin: { value: params.spin },
+        uObserverDist: { value: params.observerDistance },
+        uObserverInclination: { value: params.observerInclination },
+        uLensOffset: { value: new THREE.Vector3() },
+        uSkyDrift: { value: 0.0 },
+        uSkyMapTex: { value: null },
+        uUseSkyMap: { value: params.useSkyMap ? 1.0 : 0.0 },
+        uSkyMapStrength: { value: params.skyMapStrength },
+        uTimeDilation: { value: params.timeDilation },
+        uDiskAngularSpeed: { value: params.diskAngularSpeed },
+        uDiskSharpness: { value: params.diskSharpness },
+        uCoronalEmission: { value: params.coronalEmission },
+        uRingSharpness: { value: params.ringSharpness },
+        uStepBudget: { value: 1.0 },
+        uStepScale: { value: 1.0 },
+        uQualityScale: { value: 1.0 },
+        uShowGrid: { value: 0.0 },
+        uFrame: { value: 0.0 }
+      };
+
+      var computeMaterial = new THREE.ShaderMaterial({
+        uniforms: uniforms,
+        vertexShader: vertexShader,
+        fragmentShader: fragmentShader,
+        depthWrite: false,
+        depthTest: false
+      });
+
+      var computeScene = new THREE.Scene();
+      computeScene.add(new THREE.Mesh(quadGeo, computeMaterial));
+
+      var fallbackSkyMap = new THREE.DataTexture(new Uint8Array([0, 0, 0]), 1, 1, THREE.RGBFormat);
+      fallbackSkyMap.needsUpdate = true;
+      fallbackSkyMap.minFilter = THREE.LinearFilter;
+      fallbackSkyMap.magFilter = THREE.LinearFilter;
+      uniforms.uSkyMapTex.value = fallbackSkyMap;
+
+      var skyMapReady = false;
+      var skyMapLoader = new THREE.TextureLoader();
+      skyMapLoader.setCrossOrigin("anonymous");
+      skyMapLoader.load(
+        "https://cdn.jsdelivr.net/gh/mrdoob/three.js@r160/examples/textures/planets/galaxy_starfield.png",
+        function (tex) {
+          tex.wrapS = THREE.RepeatWrapping;
+          tex.wrapT = THREE.ClampToEdgeWrapping;
+          tex.minFilter = THREE.LinearMipmapLinearFilter;
+          tex.magFilter = THREE.LinearFilter;
+          if ("colorSpace" in tex) tex.colorSpace = THREE.SRGBColorSpace;
+          tex.anisotropy = Math.min(8, renderer.capabilities.getMaxAnisotropy());
+          uniforms.uSkyMapTex.value = tex;
+          skyMapReady = true;
+        },
+        undefined,
+        function () {
+          skyMapReady = false;
+        }
+      );
+
+      var bloomUniforms = {
+        uMainTex: { value: null },
+        uTexelSize: { value: new THREE.Vector2() }
+      };
+      var bloomMaterial = new THREE.ShaderMaterial({
+        uniforms: bloomUniforms,
+        vertexShader: vertexShader,
+        fragmentShader: bloomShader,
+        depthWrite: false,
+        depthTest: false
+      });
+      var bloomScene = new THREE.Scene();
+      bloomScene.add(new THREE.Mesh(quadGeo, bloomMaterial));
+
+      var compositeUniforms = {
+        uMainTex: { value: null },
+        uBloomTex: { value: null },
+        uBloomStrength: { value: 0.5 },
+        uTime: { value: 0.0 },
+        uSpin: { value: params.spin },
+        uQualityScale: { value: 1.0 },
+        uTexelSize: { value: new THREE.Vector2() },
+        uSharpenStrength: { value: params.imageSharpening },
+        uLensAberration: { value: params.lensAberration },
+        uDetectorNoise: { value: params.detectorNoise }
+      };
+      var compositeMaterial = new THREE.ShaderMaterial({
+        uniforms: compositeUniforms,
+        vertexShader: vertexShader,
+        fragmentShader: compositeShader,
+        depthWrite: false,
+        depthTest: false
+      });
+      var blitScene = new THREE.Scene();
+      blitScene.add(new THREE.Mesh(quadGeo, compositeMaterial));
+
+      var qualityLevels = [1.1, 1.0, 0.9, 0.8, 0.7, 0.6, 0.5];
+      var stepBudgets = [0.95, 0.9, 0.82, 0.74, 0.66, 0.58, 0.5];
+      var stepScales = [0.96, 1.0, 1.08, 1.16, 1.25, 1.36, 1.5];
+      var qualityIndex = 1;
+
+      var isMobile = /Mobi|Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
+      if (window.innerWidth < 1100) qualityIndex = Math.max(qualityIndex, 1);
+      if ((window.devicePixelRatio || 1) > 1.3) qualityIndex = Math.max(qualityIndex, 2);
+      if (isMobile) qualityIndex = Math.max(qualityIndex, 3);
+
+      var renderTarget = null;
+      var bloomRT = null;
+
+      function applyQuality() {
+        var dpr = Math.min(window.devicePixelRatio || 1, 1.8);
+        var q = qualityLevels[qualityIndex];
+        var w = Math.max(320, Math.floor(window.innerWidth * dpr * q));
+        var h = Math.max(180, Math.floor(window.innerHeight * dpr * q));
+        var maxTexture = renderer.capabilities.maxTextureSize || 4096;
+        w = Math.min(w, maxTexture);
+        h = Math.min(h, maxTexture);
+
+        if (renderTarget && renderTarget.width === w && renderTarget.height === h) {
+          uniforms.uStepBudget.value = stepBudgets[qualityIndex];
+          uniforms.uStepScale.value = stepScales[qualityIndex];
+          uniforms.uQualityScale.value = q;
+          return;
+        }
+
+        if (renderTarget) renderTarget.dispose();
+        renderTarget = new THREE.WebGLRenderTarget(w, h, {
+          minFilter: THREE.LinearFilter,
+          magFilter: THREE.LinearFilter,
+          format: THREE.RGBAFormat,
+          type: THREE.HalfFloatType,
+          depthBuffer: false,
+          stencilBuffer: false
+        });
+        renderTarget.texture.generateMipmaps = false;
+
+        var bw = Math.max(64, Math.floor(w / 4));
+        var bh = Math.max(36, Math.floor(h / 4));
+        if (bloomRT) bloomRT.dispose();
+        bloomRT = new THREE.WebGLRenderTarget(bw, bh, {
+          minFilter: THREE.LinearFilter,
+          magFilter: THREE.LinearFilter,
+          format: THREE.RGBAFormat,
+          type: THREE.HalfFloatType,
+          depthBuffer: false,
+          stencilBuffer: false
+        });
+        bloomRT.texture.generateMipmaps = false;
+
+        bloomUniforms.uTexelSize.value.set(1.0 / w, 1.0 / h);
+        compositeUniforms.uTexelSize.value.set(1.0 / w, 1.0 / h);
+        uniforms.uResolution.value.set(w, h);
+        uniforms.uStepBudget.value = stepBudgets[qualityIndex];
+        uniforms.uStepScale.value = stepScales[qualityIndex];
+        uniforms.uQualityScale.value = q;
+      }
+
+      applyQuality();
+
+      var gui = new lil.GUI({ title: "Kerr Controls" });
+      var guiControllers = [];
+      var baselineDefaults = Object.assign({}, params);
+
+      function addControl(obj, key, min, max, step, label) {
+        var c;
+        if (typeof min === "number") {
+          c = gui.add(obj, key, min, max, step);
+        } else {
+          c = gui.add(obj, key);
+        }
+        c.name(label);
+        guiControllers.push(c);
+      }
+
+      function refreshGui() {
+        for (var i = 0; i < guiControllers.length; i++) {
+          guiControllers[i].updateDisplay();
+        }
+      }
+
+      addControl(params, "mass", 0.1, 10.0, 0.01, "Mass");
+      addControl(params, "spin", 0.0, 0.99, 0.001, "Spin");
+      addControl(params, "observerDistance", 4.0, 30.0, 0.1, "Observer Distance");
+      addControl(params, "observerInclination", 0.0, 20.0, 0.1, "Observer Inclination");
+      addControl(params, "timeDilation", 0.0, 3.0, 0.01, "Time Dilation");
+      addControl(params, "diskAngularSpeed", 0.25, 3.0, 0.01, "Disk Angular Speed");
+      addControl(params, "diskSharpness", 0.0, 1.0, 0.01, "Disk Sharpness");
+      addControl(params, "driftRate", -2.0, 2.0, 0.01, "Background Drift Speed");
+      addControl(params, "coronalEmission", 0.0, 1.5, 0.01, "Coronal Emission");
+      addControl(params, "ringSharpness", 0.0, 1.0, 0.01, "Ring Sharpness");
+      addControl(params, "imageSharpening", 0.0, 1.0, 0.01, "Image Sharpening");
+      addControl(params, "lensAberration", 0.0, 1.0, 0.01, "Optical Aberration");
+      addControl(params, "detectorNoise", 0.0, 1.0, 0.01, "Detector Noise");
+      addControl(params, "bloom", 0.0, 1.5, 0.01, "Scattered Light");
+      addControl(params, "useSkyMap", null, null, null, "Sky Map Background");
+      addControl(params, "skyMapStrength", 0.0, 1.0, 0.01, "Sky Map Strength");
+      addControl(params, "showGrid", null, null, null, "Debug Grid");
+
+      var presets = {
+        loadBaselineDefaults: function () {
+          Object.assign(params, baselineDefaults);
+          refreshGui();
+        }
+      };
+      gui.add(presets, "loadBaselineDefaults").name("Preset: Baseline");
+
+      var playback = {
+        togglePause: function () {
+          paused = !paused;
+        }
+      };
+      gui.add(playback, "togglePause").name("Pause/Resume Animation");
+
+      var paused = false;
+
+      function easeOutCubic(t) {
+        return 1 - Math.pow(1 - t, 3);
+      }
+
+      function observerDistanceWithIntro() {
+        var t = Math.min(1, totalTime / 2.0);
+        return THREE.MathUtils.lerp(params.observerDistance * 3.0, params.observerDistance, easeOutCubic(t));
+      }
+
+      window.addEventListener("keydown", function (event) {
+        if (event.code !== "Space") return;
+        var active = document.activeElement;
+        if (active && (active.tagName === "INPUT" || active.tagName === "TEXTAREA")) return;
+        event.preventDefault();
+        paused = !paused;
+      });
+
+      function handleResize() {
+        renderer.setSize(window.innerWidth, window.innerHeight, false);
+        applyQuality();
+      }
+      window.addEventListener("resize", handleResize);
+
+      var lastTime = performance.now();
+      var totalTime = 0;
+      var diskTime = 0;
+      var fpsSmooth = 60;
+      var lowFpsDuration = 0;
+      var highFpsDuration = 0;
+      var lastHudUpdate = 0;
+      var bloomStrengthRuntime = params.bloom;
+
+      function updateHud(now) {
+        if (now - lastHudUpdate < 200) return;
+        lastHudUpdate = now;
+        var qualityPct = Math.round(qualityLevels[qualityIndex] * 100);
+        var steps = Math.round(170 * uniforms.uStepBudget.value);
+        hud.textContent =
+          "FPS " + fpsSmooth.toFixed(1) +
+          " | QUALITY " + qualityPct + "%" +
+          " | RK4 STEPS " + steps +
+          " | SCATTER " + bloomStrengthRuntime.toFixed(2) +
+          (paused ? " | PAUSED" : "");
+      }
+
+      function adaptQuality(dt) {
+        if (fpsSmooth < 30) {
+          lowFpsDuration += dt;
+          highFpsDuration = Math.max(0, highFpsDuration - dt * 0.5);
+        } else if (fpsSmooth > 55) {
+          highFpsDuration += dt;
+          lowFpsDuration = Math.max(0, lowFpsDuration - dt * 0.5);
+        } else {
+          lowFpsDuration = Math.max(0, lowFpsDuration - dt * 0.5);
+          highFpsDuration = Math.max(0, highFpsDuration - dt * 0.5);
+        }
+
+        if (lowFpsDuration > 0.85 && qualityIndex < qualityLevels.length - 1) {
+          qualityIndex += 1;
+          lowFpsDuration = 0;
+          highFpsDuration = 0;
+          applyQuality();
+        } else if (highFpsDuration > 3.2 && qualityIndex > 0) {
+          qualityIndex -= 1;
+          lowFpsDuration = 0;
+          highFpsDuration = 0;
+          applyQuality();
+        }
+      }
+
+      function animate(now) {
+        requestAnimationFrame(animate);
+
+        var dt = Math.min(0.05, (now - lastTime) * 0.001);
+        lastTime = now;
+        if (!paused) {
+          totalTime += dt;
+          diskTime += dt;
+        }
+
+        var fps = 1 / Math.max(dt, 1e-5);
+        fpsSmooth = THREE.MathUtils.lerp(fpsSmooth, fps, 0.08);
+        adaptQuality(dt);
+
+        uniforms.uTime.value = totalTime;
+        uniforms.uDiskTime.value = diskTime;
+        uniforms.uMass.value = params.mass;
+        uniforms.uSpin.value = params.spin;
+        uniforms.uObserverDist.value = observerDistanceWithIntro();
+        uniforms.uObserverInclination.value = params.observerInclination;
+        uniforms.uTimeDilation.value = params.timeDilation;
+        uniforms.uDiskAngularSpeed.value = params.diskAngularSpeed;
+        uniforms.uDiskSharpness.value = params.diskSharpness;
+        uniforms.uCoronalEmission.value = params.coronalEmission;
+        uniforms.uRingSharpness.value = params.ringSharpness;
+        uniforms.uSkyDrift.value = totalTime * params.driftRate * 0.18;
+        uniforms.uUseSkyMap.value = params.useSkyMap && skyMapReady ? 1.0 : 0.0;
+        uniforms.uSkyMapStrength.value = params.skyMapStrength;
+        uniforms.uLensOffset.value.set(0.0, 0.0, 0.0);
+        uniforms.uShowGrid.value = params.showGrid ? 1.0 : 0.0;
+        uniforms.uFrame.value += 1.0;
+
+        renderer.setRenderTarget(renderTarget);
+        renderer.render(computeScene, orthoCam);
+
+        var bloomPerfScale = THREE.MathUtils.clamp((fpsSmooth - 24.0) / 18.0, 0.0, 1.0);
+        bloomStrengthRuntime = params.bloom * bloomPerfScale;
+        var bloomEnabled = bloomStrengthRuntime > 0.02 && qualityIndex < qualityLevels.length - 1;
+
+        if (bloomEnabled) {
+          bloomUniforms.uMainTex.value = renderTarget.texture;
+          renderer.setRenderTarget(bloomRT);
+          renderer.render(bloomScene, orthoCam);
+        }
+
+        compositeUniforms.uMainTex.value = renderTarget.texture;
+        compositeUniforms.uBloomTex.value = bloomEnabled ? bloomRT.texture : renderTarget.texture;
+        compositeUniforms.uBloomStrength.value = bloomEnabled ? bloomStrengthRuntime : 0.0;
+        compositeUniforms.uTime.value = totalTime;
+        compositeUniforms.uSpin.value = params.spin;
+        compositeUniforms.uQualityScale.value = uniforms.uQualityScale.value;
+        compositeUniforms.uSharpenStrength.value = params.imageSharpening;
+        compositeUniforms.uLensAberration.value = params.lensAberration;
+        compositeUniforms.uDetectorNoise.value = params.detectorNoise;
+        renderer.setRenderTarget(null);
+        renderer.render(blitScene, orthoCam);
+
+        updateHud(now);
+      }
+
+      requestAnimationFrame(animate);
+    })();
+  </script>
+</body>
+</html>
