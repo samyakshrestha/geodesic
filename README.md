@@ -1,26 +1,35 @@
 # Geodesic
-Real-time Kerr black hole visualization.
+Real-time black hole visualizations in WebGL (Three.js + GLSL), focused on geodesic lensing and relativistic disk appearance.
 
-Renders a spinning black hole with WebGL using Three.js and GLSL.
+## Demos
+- `index.html`: single spinning black hole (Kerr-inspired visual model)
+- `merger.html`: binary black hole inspiral -> merger -> ringdown (Post-Newtonian driven)
 
-## Features
-- GPU ray tracing with geodesic integration in the fragment shader
-- Volumetric accretion disk with turbulent structure
-- Doppler beaming, gravitational redshift, and photon ring
-- Procedural star field with optional Milky Way sky map
-- Interactive GUI controls
-- Adaptive quality scaling for stable frame rates
+## Scientific Scope
+This project uses physically motivated approximations suitable for real-time rendering on consumer hardware.
 
-## Technical Details
-- Single-page app: all code and shaders in `index.html`
-- Fullscreen quad with Three.js ShaderMaterial
-- Geodesic integration runs per-pixel in the fragment shader
-- Multi-pass rendering: main scene, bloom extraction, final composite
-- GUI provided by lil-gui
+- Null-ray geodesic integration in an effective relativistic potential
+- Spin-coupled deflection terms to emulate frame-dragging behavior
+- Photon-ring and shadow phenomenology
+- Accretion disk radiative model with turbulence and orbital advection
+- Relativistic Doppler beaming and gravitational redshift-style color shifts
+- Binary inspiral from post-Newtonian-style orbital evolution (`x = M/r`, `dx/dt`, `dphi/dt`)
 
-## Runtime Controls
-Top-right GUI panel:
+Not included:
+- Full Kerr geodesics in Boyer-Lindquist coordinates
+- Full numerical relativity / GRMHD
+- Waveform-calibrated surrogate data files
 
+## Rendering Architecture
+- Single-file apps: all HTML, JS, and GLSL in one file per demo
+- Fullscreen quad + `ShaderMaterial`
+- Per-pixel geodesic integration in the fragment shader
+- Multi-pass pipeline: main render, bloom extraction, composite pass
+- Adaptive quality system for stable frame rate
+- GUI with `lil-gui`
+
+## Single-Black-Hole (`index.html`)
+Core controls:
 - `Mass`
 - `Spin`
 - `Observer Distance`
@@ -38,34 +47,71 @@ Top-right GUI panel:
 - `Sky Map Background`
 - `Sky Map Strength`
 - `Debug Grid`
-- `Preset: Baseline`
-- `Pause/Resume Animation`
 
-Press `Space` to pause/resume animation.
+## Binary-Merger (`merger.html`)
+Core controls:
+- `Total Mass`
+- `Mass Ratio q`
+- `Spin a1`, `Spin a2`
+- `Initial Separation`
+- `Inspiral Rate`
+- `Observer Distance`, `Observer Inclination`
+- `Disk Angular Speed`
+- `Disk Sharpness`
+- `Merger Disk Wobble`
+- `Disk Bridge Strength`
+- `Background Drift Speed`
+- `GW Ripple`, `GW Ripple Strength`
+- `Auto Frame`
+- `Far-Field RK2`
+- `Playback Speed`
+
+Playback actions:
+- `Play/Pause`
+- `Toggle Rewind`
+- `Reset to Inspiral`
+- `Skip to Post-Merger`
 
 ## Sky Map
-When enabled, the shader blends procedural stars with a Milky Way panorama from Wikipedia. If the network request fails, a fallback texture is generated. The HUD displays `SKYMAP REAL`, `SKYMAP FALLBACK`, or `SKYMAP OFF`.
+When enabled, the shader blends procedural stars with a Milky Way sky map. If network texture loading fails, a procedural fallback sky is used. HUD state:
+- `SKYMAP REAL`
+- `SKYMAP FALLBACK`
+- `SKYMAP OFF`
 
 ## Run Locally
-Open the file directly:
+Open directly:
 
 ```bash
 open index.html
+open merger.html
 ```
 
-Or use a local server:
+Or run a local server:
 
 ```bash
 python3 -m http.server 8080
 ```
 
-Then navigate to `http://localhost:8080/`
+Then open:
+- `http://localhost:8080/index.html`
+- `http://localhost:8080/merger.html`
+
+## GitHub Pages
+- Single BH: `https://samyakshrestha.github.io/geodesic/`
+- Binary merger: `https://samyakshrestha.github.io/geodesic/merger.html`
+
+## Performance Notes
+- Single BH typically runs faster than binary merger.
+- Binary mode is heavier because two potentials and merger transitions are evaluated per pixel.
+- Adaptive quality lowers internal resolution/step budget when FPS drops.
 
 ## Troubleshooting
-**Black screen:** WebGL is disabled or unsupported.
+**Black screen**
+- WebGL disabled or unsupported browser/GPU path.
 
-**Sky map not working:** Check the HUD. `SKYMAP FALLBACK` means the network request failed and a procedural texture is being used instead.
+**Sky map not visible**
+- Check HUD. `SKYMAP FALLBACK` means network sky texture failed and fallback is active.
 
-**Low FPS:** Reduce `Scattered Light`, `Detector Noise`, or `Image Sharpening`. The quality system will adapt automatically after a few seconds.
-
-
+**Low FPS**
+- Reduce `Scattered Light`, `Detector Noise`, or `Image Sharpening`.
+- In merger mode, also reduce `GW Ripple Strength` and keep `Background Drift Speed` near `0`.
